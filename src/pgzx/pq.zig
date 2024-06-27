@@ -175,14 +175,23 @@ pub const Conn = struct {
         }
     }
 
-    pub fn exec(self: *const Self, query: [:0]const u8) !Result {
-        const rc = pg.PQsendQuery(self.conn, query);
-        if (rc == 0) {
-            pqError(@src(), self.conn) catch |e| return e;
-            return Error.SendFailed;
+    pub fn exec(self: *const Self, stmt: [:0]const u8, args: anytype) !Result {
+        if (args.len == 0) {
+            const rc = pg.PQsendQuery(self.conn, stmt);
+            if (rc == 0) {
+                pqError(@src(), self.conn) catch |e| return e;
+                return Error.SendFailed;
+            }
+            const res = try self.getRawResultLast();
+            return try Self.initExecResult(self.conn, res);
         }
-        const res = try self.getRawResultLast();
-        return try Self.initExecResult(self.conn, res);
+
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const local_allocator = arena.allocator();
+
+        var buffer = std.ArrayList(u8).init(local_allocator);
+        return self.execParams(stmt, try buildParams(local_allocator, &buffer, args));
     }
 
     pub fn execCommand(self: *const Self, command: [:0]const u8, args: anytype) !void {
@@ -214,6 +223,16 @@ pub const Conn = struct {
             return Error.SendFailed;
         }
         return try self.getResultLast();
+    }
+
+    pub fn query(self: *const Self, stmt: [:0]const u8, args: anytype) !Rows {
+        const res = try self.exec(stmt, args);
+        return Rows.init(res);
+    }
+
+    pub fn queryParams(self: *const Self, stmt: [:0]const u8, params: PGQueryParams) !Rows {
+        const res = try self.execParams(stmt, params);
+        return Rows.init(res);
     }
 
     pub fn getResultLast(self: *const Self) !Result {
@@ -260,8 +279,8 @@ pub const Conn = struct {
 
     /// Send a query with parameters. We assume that the values are encoded in
     /// text format.
-    pub fn sendQueryParams(self: *const Self, query: [:0]const u8, params: PGQueryParams) !void {
-        std.log.info("conn '{*}' sendQueryParams: {s}", .{ self.conn, query });
+    pub fn sendQueryParams(self: *const Self, stmt: [:0]const u8, params: PGQueryParams) !void {
+        std.log.info("conn '{*}' sendQueryParams: {s}", .{ self.conn, stmt });
 
         const n = params.values.len;
         if (params.types) |t| {
@@ -282,7 +301,7 @@ pub const Conn = struct {
 
         const rc = pg.PQsendQueryParams(
             self.conn,
-            query,
+            stmt,
             @intCast(n),
             if (params.types) |t| t.ptr else null,
             params.values.ptr,
@@ -296,8 +315,8 @@ pub const Conn = struct {
         }
     }
 
-    pub fn sendQuery(self: *const Self, query: []const u8) !void {
-        const rc = pg.PQsendQuery(self.conn, query);
+    pub fn sendQuery(self: *const Self, stmt: []const u8) !void {
+        const rc = pg.PQsendQuery(self.conn, stmt);
         if (rc == 0) {
             pqError(@src()) catch |e| return e;
             return Error.SendFailed;
@@ -710,6 +729,59 @@ const Result = struct {
             return std.mem.span(msg);
         }
         return null;
+    }
+
+    pub fn numRows(self: Self) usize {
+        return @intCast(pg.PQntuples(self.result));
+    }
+};
+
+pub const Rows = struct {
+    result: Result,
+    row: isize,
+    numrows: isize,
+
+    pub fn init(result: Result) Rows {
+        return .{
+            .result = result,
+            .numrows = @intCast(result.numRows()),
+            .row = -1,
+        };
+    }
+
+    pub fn deinit(self: *Rows) void {
+        self.result.deinit();
+    }
+
+    pub fn next(self: *Rows) ?Tuple {
+        const next_idx = self.row + 1;
+        if (next_idx >= self.numrows) {
+            return null;
+        }
+        self.row = next_idx;
+        return self.tuple();
+    }
+
+    pub inline fn tuple(self: Rows) Tuple {
+        return .{ .result = self.result, .idx = self.row };
+    }
+};
+
+pub const Tuple = struct {
+    result: Result,
+    idx: isize,
+
+    pub fn isNull(self: Tuple, field: isize) ?[:0]const u8 {
+        const rc = pg.PQgetisnull(self.result.result, self.idx, field);
+        return rc == 1;
+    }
+
+    pub fn len(self: Tuple, field: isize) isize {
+        return pg.PQgetlength(self.result.result, self.idx, field);
+    }
+
+    pub fn rawValue(self: Tuple, field: isize) [*c]const u8 {
+        return pg.PQgetvalue(self.result.result, self.idx, field);
     }
 };
 
