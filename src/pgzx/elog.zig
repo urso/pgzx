@@ -347,6 +347,31 @@ pub fn logFn(
     api.errfinish(src, .{ .allow_longjmp = false }) catch {};
 }
 
+/// Use PostgreSQL elog to log a formatted message using the `DEBUG5` level.
+pub fn Debug5(src: SourceLocation, comptime fmt: []const u8, args: anytype) void {
+    sendElog(src, pg.DEBUG5, fmt, args);
+}
+
+/// Use PostgreSQL elog to log a formatted message using the `DEBUG4` level.
+pub fn Debug4(src: SourceLocation, comptime fmt: []const u8, args: anytype) void {
+    sendElog(src, pg.DEBUG4, fmt, args);
+}
+
+/// Use PostgreSQL elog to log a formatted message using the `DEBUG3` level.
+pub fn Debug3(src: SourceLocation, comptime fmt: []const u8, args: anytype) void {
+    sendElog(src, pg.DEBUG3, fmt, args);
+}
+
+/// Use PostgreSQL elog to log a formatted message using the `DEBUG2` level.
+pub fn Debug2(src: SourceLocation, comptime fmt: []const u8, args: anytype) void {
+    sendElog(src, pg.DEBUG2, fmt, args);
+}
+
+/// Use PostgreSQL elog to log a formatted message using the `DEBUG1` level.
+pub fn Debug1(src: SourceLocation, comptime fmt: []const u8, args: anytype) void {
+    sendElog(src, pg.DEBUG1, fmt, args);
+}
+
 /// Use PostgreSQL elog to log a formatted message using the `LOG` level.
 ///
 /// Messages using `LOG` are send to the server by default.
