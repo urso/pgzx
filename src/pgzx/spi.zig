@@ -114,24 +114,24 @@ pub fn scanProcessed(row: usize, values: anytype) !void {
 }
 
 fn scanField(comptime fieldType: type, to: anytype, row: usize, column: c_int) !c_int {
-    const fieldInfo = @typeInfo(fieldType);
-    if (fieldInfo != .Pointer) {
+    const field_info = @typeInfo(fieldType);
+    if (field_info != .Pointer) {
         @compileError("scanField requires a pointer");
     }
-    if (fieldInfo.Pointer.size == .Slice) {
+    if (field_info.Pointer.size == .Slice) {
         @compileError("scanField requires a single pointer, not a slice");
     }
 
-    const childType = fieldInfo.Pointer.child;
-    if (@typeInfo(childType) == .Struct) {
-        var structColumn = column;
-        inline for (std.meta.fields(childType)) |field| {
-            const childPtr = &@field(to.*, field.name);
-            structColumn = try scanField(@TypeOf(childPtr), childPtr, row, structColumn);
+    const child_type = field_info.Pointer.child;
+    if (@typeInfo(child_type) == .Struct) {
+        var struct_column = column;
+        inline for (std.meta.fields(child_type)) |field| {
+            const child_ptr = &@field(to.*, field.name);
+            struct_column = try scanField(@TypeOf(child_ptr), child_ptr, row, struct_column);
         }
-        return structColumn;
+        return struct_column;
     } else {
-        const value = try convBinValue(childType, pg.SPI_tuptable, row, column);
+        const value = try convBinValue(child_type, pg.SPI_tuptable, row, column);
         to.* = value;
         return column + 1;
     }
@@ -140,22 +140,20 @@ fn scanField(comptime fieldType: type, to: anytype, row: usize, column: c_int) !
 pub const Rows = struct {
     row: isize = -1,
 
-    const Self = @This();
-
-    fn init() Self {
+    fn init() Rows {
         return .{};
     }
 
-    fn typed(self: Self, comptime T: type) RowsOf(T) {
+    fn typed(self: Rows, comptime T: type) RowsOf(T) {
         return RowsOf(T).init(self);
     }
 
-    pub fn deinit(self: *Self) void {
+    pub fn deinit(self: *Rows) void {
         pg.SPI_freetuptable(pg.SPI_tuptable);
         self.row = -1;
     }
 
-    pub fn next(self: *Self) bool {
+    pub fn next(self: *Rows) bool {
         const next_idx = self.row + 1;
         if (next_idx >= pg.SPI_processed) {
             return false;
@@ -164,7 +162,7 @@ pub const Rows = struct {
         return true;
     }
 
-    pub fn scan(self: *Self, values: anytype) !void {
+    pub fn scan(self: *Rows, values: anytype) !void {
         if (self.row < 0) {
             return err.PGError.SPIInvalidRowIndex;
         }
