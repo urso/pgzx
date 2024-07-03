@@ -24,6 +24,8 @@ pub const ConnStatus = pg.ConnStatusType;
 pub const PollingStatus = pg.PostgresPollingStatusType;
 pub const TransactionStatus = pg.PGTransactionStatusType;
 
+pub const FormatCode = enum(isize) { Text = 0, Binary = 1 };
+
 // libpqsrv wrappers and extensions.
 const pqsrv = struct {
     // custom waitevent types retrieved from shared memory.
@@ -734,6 +736,10 @@ const Result = struct {
     pub fn numRows(self: Self) usize {
         return @intCast(pg.PQntuples(self.result));
     }
+
+    pub fn rowDescription(self: Self) RowDescription {
+        return .{ .result = self };
+    }
 };
 
 pub const Rows = struct {
@@ -749,8 +755,20 @@ pub const Rows = struct {
         };
     }
 
-    pub fn deinit(self: *Rows) void {
+    pub inline fn deinit(self: *Rows) void {
         self.result.deinit();
+    }
+
+    pub inline fn numRowsTotal(self: Rows) usize {
+        return @intCast(pg.PQntuples(self.result));
+    }
+
+    pub inline fn numRowsLeft(self: Rows) usize {
+        return self.numRowsTotal() - @as(usize, @intCast((self.rows + 1)));
+    }
+
+    pub inline fn rowDescription(self: Rows) RowDescription {
+        return .{ .result = self.result };
     }
 
     pub fn next(self: *Rows) ?Tuple {
@@ -762,7 +780,7 @@ pub const Rows = struct {
         return self.tuple();
     }
 
-    pub inline fn tuple(self: Rows) Tuple {
+    inline fn tuple(self: Rows) Tuple {
         return .{ .result = self.result, .idx = self.row };
     }
 };
@@ -771,17 +789,88 @@ pub const Tuple = struct {
     result: Result,
     idx: isize,
 
-    pub fn isNull(self: Tuple, field: isize) ?[:0]const u8 {
-        const rc = pg.PQgetisnull(self.result.result, self.idx, field);
-        return rc == 1;
+    pub inline fn numFields(self: Tuple) usize {
+        return @intCast(pg.PQntuples(self.result));
     }
 
-    pub fn len(self: Tuple, field: isize) isize {
-        return pg.PQgetlength(self.result.result, self.idx, field);
+    pub inline fn field(self: Tuple, f: usize) Field {
+        return .{ .result = self.result, .row = self.idx, .col = f };
     }
 
-    pub fn rawValue(self: Tuple, field: isize) [*c]const u8 {
-        return pg.PQgetvalue(self.result.result, self.idx, field);
+    pub inline fn isNull(self: Tuple, f: isize) ?[:0]const u8 {
+        return self.field(f).isNull();
+    }
+
+    pub inline fn len(self: Tuple, f: isize) isize {
+        return self.field(f).len();
+    }
+
+    pub inline fn data(self: Tuple, f: isize) [*c]const u8 {
+        return self.field(f).data();
+    }
+};
+
+pub const Field = struct {
+    result: Result,
+    row: isize,
+    col: usize,
+
+    pub fn description(self: Field) FieldDescription {
+        return .{ .result = self.result, .idx = self.col };
+    }
+
+    pub fn isNull(self: Field) bool {
+        return pg.PQgetisnull(self.result.result, @intCast(self.row), @intCast(self.col)) == 1;
+    }
+
+    pub fn len(self: Field) isize {
+        return pg.PQgetlength(self.result.result, @intCast(self.row), @intCast(self.col));
+    }
+
+    pub fn data(self: Field) [*c]const u8 {
+        return pg.PQgetvalue(self.result.result, @intCast(self.row), @intCast(self.col));
+    }
+};
+
+pub const RowDescription = struct {
+    result: Result,
+
+    pub fn len(self: RowDescription) usize {
+        return @intCast(pg.PQnfields(self.result));
+    }
+
+    pub fn field(self: RowDescription, idx: usize) ?FieldDescription {
+        return if (idx >= self.len()) null else .{
+            .result = self.result,
+            .idx = idx,
+        };
+    }
+};
+
+pub const FieldDescription = struct {
+    result: Result,
+    idx: usize,
+
+    pub fn name(self: FieldDescription) ?[:0]const u8 {
+        const c = pg.PQfname(self.result.result, @intCast(self.idx));
+        return if (c != null) std.mem.span(c) else null;
+    }
+
+    pub fn format(self: FieldDescription) FormatCode {
+        const c = pg.PQfformat(self.result.result, @intCast(self.idx));
+        return @enumFromInt(c);
+    }
+
+    pub fn typeOID(self: FieldDescription) pg.Oid {
+        return pg.PQftype(self.result.result, @intCast(self.idx));
+    }
+
+    pub fn modifier(self: FieldDescription) c_int {
+        return pg.PQfmod(self.result.result, @intCast(self.idx));
+    }
+
+    pub fn size(self: FieldDescription) isize {
+        return @intCast(pg.PQfsize(self.result.result, @intCast(self.idx)));
     }
 };
 
