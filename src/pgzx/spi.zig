@@ -43,7 +43,24 @@ pub const ExecOptions = struct {
 
 pub const SPIError = err.PGError || std.mem.Allocator.Error;
 
-pub fn exec(sql: [:0]const u8, options: ExecOptions) SPIError!c_int {
+pub fn exec(sql: [:0]const u8, options: ExecOptions) SPIError!isize {
+    const ret = try execImpl(sql, options);
+    var rows = Rows.init();
+    defer rows.deinit();
+    return @intCast(ret);
+}
+
+pub fn query(sql: [:0]const u8, options: ExecOptions) SPIError!Rows {
+    _ = try execImpl(sql, options);
+    return Rows.init();
+}
+
+pub fn queryTyped(comptime T: type, sql: [:0]const u8, options: ExecOptions) SPIError!RowsOf(T) {
+    const rows = try query(sql, options);
+    return rows.typed(T);
+}
+
+fn execImpl(sql: [:0]const u8, options: ExecOptions) SPIError!c_int {
     if (options.args) |args| {
         if (args.types.len != args.values.len) {
             return err.PGError.SPIArgument;
@@ -92,18 +109,8 @@ pub fn exec(sql: [:0]const u8, options: ExecOptions) SPIError!c_int {
     }
 }
 
-pub fn query(sql: [:0]const u8, options: ExecOptions) SPIError!Rows {
-    _ = try exec(sql, options);
-    return Rows.init();
-}
-
-pub fn queryTyped(comptime T: type, sql: [:0]const u8, options: ExecOptions) SPIError!RowsOf(T) {
-    const rows = try query(sql, options);
-    return rows.typed(T);
-}
-
-pub fn scanProcessed(row: usize, values: anytype) !void {
-    scanProcessed(SPIFrame.get(), row, values);
+fn scanProcessed(row: usize, values: anytype) !void {
+    scanProcessedFrame(SPIFrame.get(), row, values);
 }
 
 inline fn scanProcessedFrame(frame: SPIFrame, row: usize, values: anytype) !void {
@@ -202,13 +209,15 @@ pub const Rows = struct {
     }
 
     pub fn deinit(self: *Rows) void {
-        pg.SPI_freetuptable(self.spi_frame.tuptable);
+        if (self.spi_frame.tuptable) |tt| {
+            pg.SPI_freetuptable(tt);
+        }
         self.row = -1;
     }
 
     pub fn next(self: *Rows) bool {
         const next_idx = self.row + 1;
-        if (next_idx >= self.spi_frame.processed) {
+        if (self.spi_frame.tuptable == null or next_idx >= self.spi_frame.processed) {
             return false;
         }
         self.row = next_idx;
@@ -277,9 +286,12 @@ pub fn convBinValue(comptime T: type, frame: SPIFrame, row: usize, col: c_int) !
 
     var nd: pg.NullableDatum = undefined;
     const table = frame.tuptable.?;
-    nd.value = pg.SPI_getbinval(table.*.vals[row], table.*.tupdesc, col, @ptrCast(&nd.isnull));
+    const desc = table.*.tupdesc;
+    nd.value = pg.SPI_getbinval(table.*.vals[row], desc, col, @ptrCast(&nd.isnull));
     try checkStatus(pg.SPI_result);
-    return try datum.fromNullableDatum(T, nd);
+    const attr_desc = &desc.*.attrs()[@intCast(col - 1)];
+    const oid = attr_desc.atttypid;
+    return try datum.fromNullableDatumWithOID(T, nd, oid);
 }
 
 fn checkStatus(st: c_int) err.PGError!void {
