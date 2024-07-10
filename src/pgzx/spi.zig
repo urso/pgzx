@@ -1,6 +1,7 @@
 const std = @import("std");
 const pg = @import("pgzx_pgsys");
 
+const meta = @import("meta.zig");
 const mem = @import("mem.zig");
 const err = @import("err.zig");
 const datum = @import("datum.zig");
@@ -152,12 +153,12 @@ fn scanField(
 
 pub fn OwnedSPIFrameRows(comptime R: type) type {
     return struct {
-        rows: Rows,
+        rows: R,
 
         const Self = @This();
 
         pub inline fn init(r: R) Self {
-            return .{ .r = r };
+            return .{ .rows = r };
         }
 
         pub inline fn deinit(self: *Self) void {
@@ -165,7 +166,9 @@ pub fn OwnedSPIFrameRows(comptime R: type) type {
             finish();
         }
 
-        pub const next = R.next;
+        pub fn next(self: *Self) meta.fnReturnType(@TypeOf(R.next)) {
+            return self.rows.next();
+        }
 
         pub const scan = if (@hasField(R, "scan"))
             R.scan
@@ -237,6 +240,7 @@ pub fn RowsOf(comptime T: type) type {
         rows: Rows,
 
         const Self = @This();
+        pub const Owned = OwnedSPIFrameRows(Self);
 
         pub fn init(rows: Rows) Self {
             return .{ .rows = rows };
@@ -246,7 +250,7 @@ pub fn RowsOf(comptime T: type) type {
             self.rows.deinit();
         }
 
-        pub fn ownedSPIFrame(self: Self) OwnedSPIFrameRows(Self) {
+        pub fn ownedSPIFrame(self: Self) Self.Owned {
             return OwnedSPIFrameRows(Self).init(self);
         }
 
