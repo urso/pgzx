@@ -85,6 +85,8 @@ To report errors during execution, use the [Error][docs_Error] or [ErrorThrow][d
     }
 ```
 
+The elog module also exports functions that resemble the C API including functions like `ereport`, `errcode`, or `errmsg`.
+
 If you browse through the Postgres source code, you'll see the [PG_TRY / PG_CATCH / PG_FINALLY](https://github.com/postgres/postgres/blob/master/src/include/utils/elog.h#L318) macros used as a form of "exception handling" in C, catching errors raised by the [ereport](https://www.postgresql.org/docs/current/error-message-reporting.html) family of functions. These macros make use of long jumps (i.e. jumps across function boundaries) to the "catch/finally" destination. This means we need to be careful when calling Postgres functions from Zig. For example, if the called C function raises an `ereport` error, the long jump might skip the Zig code that would have cleaned up resources (e.g. `errdefer`).
 
 pgzx offers an alternative Zig implementation for the PG_TRY family of macros. This typically looks in code something like this:
