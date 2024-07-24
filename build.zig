@@ -20,7 +20,7 @@ pub fn build(b: *std.Build) void {
 
     // pgzx_pgsys module: C bindings to Postgres
     const pgzx_pgsys = blk: {
-        const module = b.addModule("pgzx_pgsys", .{
+        const module = b.addModule("pgsys", .{
             .root_source_file = b.path("./src/pgzx/c.zig"),
             .target = target,
             .optimize = optimize,
