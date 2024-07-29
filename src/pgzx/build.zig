@@ -32,6 +32,95 @@ modules: struct {
     }
 },
 
+// We use project to collect common build optoins and resources.
+//
+// When creating the docs or build and install steps, `Compile` step is
+// directly configured to emit these kind of resources. Because we do not
+// always want to emit everything we are forced to create separate `Compile`
+// step instances for the different commands we want to run. The `Project`
+// struct helps us to create properly configured resources, including
+// dependencies.
+//
+pub const Project = struct {
+    pgbuild: *Build,
+    build: *std.Build,
+    deps: struct {
+        pgzx: *std.Build.Module,
+    },
+    options: std.StringArrayHashMapUnmanaged(*Step.Options),
+    config: Config,
+
+    pub const Config = struct {
+        name: []const u8,
+        version: ExtensionVersion,
+
+        root_dir: []const u8,
+        root_source_file: ?[]const u8 = null,
+
+        extension_dir: ?[]const u8 = null,
+    };
+
+    pub fn init(b: *std.Build, c: Config) Project {
+        const pgbuild = Build.create(b, .{
+            .target = b.standardTargetOptions(.{}),
+            .optimize = b.standardOptimizeOption(.{}),
+            .debug = .{
+                .pg_config = false,
+                .extension_lib = false,
+            },
+        });
+
+        var proj_config = c;
+        if (c.root_source_file == null) {
+            const file_name = std.fmt.allocPrint(b.allocator, "{s}.zig", .{c.name}) catch unreachable;
+            const src: []u8 = std.fs.path.join(b.allocator, &[_][]const u8{ c.root_dir, file_name }) catch unreachable;
+            proj_config.root_source_file = src;
+        }
+        if (c.extension_dir == null) {
+            proj_config.extension_dir = "./extension/";
+        }
+
+        return Project{
+            .build = b,
+            .pgbuild = pgbuild,
+            .deps = .{
+                .pgzx = pgbuild.modules.pgzx(),
+            },
+            .config = proj_config,
+            .options = std.StringArrayHashMapUnmanaged(*Step.Options).init(b.allocator, &.{}, &.{}) catch unreachable,
+        };
+    }
+
+    pub fn extensionLib(proj: Project) *Step.Compile {
+        const lib = proj.pgbuild.addExtensionLib(.{
+            .name = proj.config.name,
+            .version = proj.config.version,
+            .root_dir = proj.config.root_dir,
+            .root_source_file = proj.build.path(proj.config.root_source_file.?),
+        });
+        lib.root_module.addImport("pgzx", proj.deps.pgzx);
+
+        var it = proj.options.iterator();
+        while (it.next()) |kv| {
+            lib.root_module.addOptions(kv.key_ptr.*, kv.value_ptr.*);
+        }
+
+        return lib;
+    }
+
+    pub fn installExtensionLib(proj: Project) *Step.InstallFile {
+        return proj.pgbuild.addInstallExtensionLibArtifact(proj.extensionLib(), proj.config.name);
+    }
+
+    pub fn installExtensionDir(proj: Project) *Step.InstallDir {
+        return proj.pgbuild.addInstallExtensionDir(proj.config.extension_dir.?);
+    }
+
+    pub fn addOptions(proj: *Project, module_name: []const u8, options: *Step.Options) void {
+        proj.options.put(proj.build.allocator, module_name, options) catch unreachable;
+    }
+};
+
 pub const DebugOptions = struct {
     pg_config: bool = false,
     extension_dir: bool = false,
