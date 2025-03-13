@@ -1,0 +1,14 @@
+.{
+    .name = .pghostname_zig,
+    .fingerprint = 0xb5ee05c8bdbc8686,
+    .version = "0.1.0",
+    .paths = .{
+        "extension",
+        "src",
+    },
+    .dependencies = .{
+        .pgzx = .{
+            .path = "./../..",
+        },
+    },
+}
